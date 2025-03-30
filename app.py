@@ -2,6 +2,10 @@ import pandas as pd
 import streamlit as st
 import os
 
+# Constants
+MAX_INITIAL_BOOKS = 5
+MAX_DESCRIPTION_LENGTH = 200
+
 # Set page configuration
 st.set_page_config(
     page_title="Book Recommendation System",
@@ -13,7 +17,7 @@ st.set_page_config(
 st.title("📚 Book Recommendation System")
 st.markdown("""
 Discover your next favorite book based on titles, authors, and categories you enjoy!
-""")
+""")e
 
 CSV_PATH = "books.csv"
 
@@ -68,34 +72,53 @@ filter_method = st.sidebar.radio(
 )
 
 # Main Content Area
+# By Author Section
 if filter_method == "By Author":
     selected_author = st.sidebar.selectbox("Select Author", unique_authors)
     filtered_books = books_df[books_df[author_column] == selected_author]
     
     st.header(f"Books by {selected_author}")
     if not filtered_books.empty:
-        for _, row in filtered_books.iterrows():
+        total_books = len(filtered_books)
+        for i, (_, row) in enumerate(filtered_books.iterrows()):
+            if i >= MAX_INITIAL_BOOKS:
+                st.info(f"Showing {MAX_INITIAL_BOOKS} out of {total_books} books by {selected_author}.")
+                break
             st.markdown(f"### {row[title_column]}")
             st.markdown(f"**Category:** {row[category_column]}")
-            st.markdown(f"**Description:** {row[description_column]}")
+            # Truncate long descriptions
+            description = row[description_column][:MAX_DESCRIPTION_LENGTH]
+            if len(row[description_column]) > MAX_DESCRIPTION_LENGTH:
+                description += "..."
+            st.markdown(f"**Description:** {description}")
             st.divider()
     else:
         st.write("No books found for this author.")
 
+# By Category Section
 elif filter_method == "By Category":
     selected_category = st.sidebar.selectbox("Select Category", unique_categories)
     filtered_books = books_df[books_df[category_column].str.contains(selected_category, na=False)]
     
     st.header(f"Books in {selected_category} category")
     if not filtered_books.empty:
-        for _, row in filtered_books.iterrows():
+        total_books = len(filtered_books)
+        for i, (_, row) in enumerate(filtered_books.iterrows()):
+            if i >= MAX_INITIAL_BOOKS:
+                st.info(f"Showing {MAX_INITIAL_BOOKS} out of {total_books} books in {selected_category} category.")
+                break
             st.markdown(f"### {row[title_column]}")
             st.markdown(f"**Author:** {row[author_column]}")
-            st.markdown(f"**Description:** {row[description_column]}")
+            # Truncate long descriptions
+            description = row[description_column][:MAX_DESCRIPTION_LENGTH]
+            if len(row[description_column]) > MAX_DESCRIPTION_LENGTH:
+                description += "..."
+            st.markdown(f"**Description:** {description}")
             st.divider()
     else:
         st.write("No books found in this category.")
 
+#By Title Section
 elif filter_method == "By Title":
     user_input = st.sidebar.text_input("Enter a book title")
     if user_input:
