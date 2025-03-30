@@ -17,7 +17,7 @@ st.set_page_config(
 st.title("📚 Book Recommendation System")
 st.markdown("""
 Discover your next favorite book based on titles, authors, and categories you enjoy!
-""")e
+""")
 
 CSV_PATH = "books.csv"
 
