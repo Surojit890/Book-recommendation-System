@@ -65,15 +65,65 @@ with st.expander("Dataset Information"):
 # Sidebar for filters
 st.sidebar.header("Find Books By:")
 
+# Filter method - store in session state
+if 'filter_method' not in st.session_state:
+    st.session_state.filter_method = None
+
 # Filter method
 filter_method = st.sidebar.radio(
     "Search method",
-    ["By Author", "By Category", "By Title", "Get Recommendations"]
+    [None, "By Author", "By Category", "By Title", "Get Recommendations"],
+    format_func=lambda x: "Select a method..." if x is None else x
 )
 
+# Update session state
+st.session_state.filter_method = filter_method
+
 # Main Content Area
+if filter_method is None:
+    # Landing page content
+    st.markdown("""
+    ## Welcome to the Book Recommendation System!
+    
+    This application helps you discover books based on your preferences. Here's how you can use it:
+    
+    ### Search Methods:
+    
+    **By Author**: Browse books written by a specific author
+    
+    **By Category**: Find books in categories like Fiction, Science, History, etc.
+    
+    **By Title**: Search for specific book titles
+    
+    **Get Recommendations**: Discover books similar to ones you already enjoy!
+    
+    ### How to Get Started:
+    
+    1. Select a search method from the sidebar on the left
+    2. Use the filters to narrow down your selection
+    3. Explore book details and recommendations
+    
+    ### About the Recommendation System:
+    
+    Our recommendation system uses a simple but effective approach:
+    - Matching categories between books (+1 point per match)
+    - Books by the same author receive higher priority (+2 points)
+    
+    The higher the match percentage, the more likely you'll enjoy the recommended book!
+    """)
+    
+    # Display some statistics or featured books
+    with st.expander("Book Collection Statistics"):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Books", books_df.shape[0])
+        with col2:
+            st.metric("Unique Authors", len(unique_authors))
+        with col3:
+            st.metric("Categories", len(unique_categories))
+
 # By Author Section
-if filter_method == "By Author":
+elif filter_method == "By Author":
     selected_author = st.sidebar.selectbox("Select Author", unique_authors)
     filtered_books = books_df[books_df[author_column] == selected_author]
     
@@ -118,7 +168,7 @@ elif filter_method == "By Category":
     else:
         st.write("No books found in this category.")
 
-#By Title Section
+# By Title Section
 elif filter_method == "By Title":
     user_input = st.sidebar.text_input("Enter a book title")
     if user_input:
@@ -135,6 +185,7 @@ elif filter_method == "By Title":
         else:
             st.warning(f"No books found containing '{user_input}'")
 
+# Recommendation Section
 else:  # Get Recommendations
     st.sidebar.markdown("### Find Similar Books")
     
@@ -219,7 +270,11 @@ else:  # Get Recommendations
                     st.markdown(f"### {row[title_column]}")
                     st.markdown(f"**Author:** {row[author_column]}")
                     st.markdown(f"**Category:** {row[category_column]}")
-                    st.markdown(f"**Description:** {row[description_column][:200]}...")
+                    # Truncate long descriptions
+                    description = row[description_column][:MAX_DESCRIPTION_LENGTH]
+                    if len(row[description_column]) > MAX_DESCRIPTION_LENGTH:
+                        description += "..."
+                    st.markdown(f"**Description:** {description}")
                 
                 st.divider()
 
