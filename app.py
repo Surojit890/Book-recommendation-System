@@ -381,14 +381,17 @@ elif filter_method == "By Author":
     # Automatically search API if no books found
     if filtered_books.empty:
         with st.spinner(f"Searching for books by {selected_author}..."):
+            # Use enhanced author search function
             search_results = search_books_by_author(selected_author)
             if search_results:
                 new_books = create_books_dataframe(search_results)
-                # Filter to include only books by this author
+                # Less strict filtering for author names
                 author_parts = selected_author.lower().split()
+                threshold = max(1, len(author_parts) // 2)  # At least half the parts must match
+                
                 filtered_new_books = new_books[
                     new_books[author_column].str.lower().apply(
-                        lambda x: all(part in x.lower() for part in author_parts)
+                        lambda x: sum(part in x for part in author_parts) >= threshold
                     )
                 ]
                 
@@ -396,7 +399,7 @@ elif filter_method == "By Author":
                     books_df = pd.concat([books_df, filtered_new_books]).drop_duplicates(subset=[title_column])
                     st.success(f"Found {len(filtered_new_books)} books by {selected_author}")
                     # Update filtered books
-                    filtered_books = books_df[books_df[author_column] == selected_author]
+                    filtered_books = books_df[books_df[author_column].str.contains(selected_author, case=False)]
                     # Update unique values after search
                     unique_authors = sorted(books_df[author_column].dropna().unique())
                     unique_categories = sorted(books_df[category_column].str.split(',').explode().str.strip().dropna().unique())
