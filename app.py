@@ -418,44 +418,68 @@ else:  # Get Recommendations
     if book_selection_method == "By Title":
         user_input = st.sidebar.text_input("Enter a book title")
         if user_input:
+            # First try to find in existing dataframe
             matched_titles = books_df[books_df[title_column].str.contains(user_input, case=False)]
+            
+            # If not found in dataframe, automatically search the API
+            if matched_titles.empty:
+                with st.spinner(f"Searching Open Library for '{user_input}'..."):
+                    search_results = search_books(user_input)
+                    if search_results:
+                        new_books = create_books_dataframe(search_results)
+                        books_df = pd.concat([books_df, new_books]).drop_duplicates(subset=[title_column])
+                        st.success(f"Found {len(new_books)} books matching '{user_input}'")
+                        # Update unique values after search
+                        unique_authors = sorted(books_df[author_column].dropna().unique())
+                        unique_categories = sorted(books_df[category_column].str.split(',').explode().str.strip().dropna().unique())
+                        # Try matching titles again
+                        matched_titles = books_df[books_df[title_column].str.contains(user_input, case=False)]
+            
+            # Now check if we have matches
             if not matched_titles.empty:
                 selected_title = st.sidebar.selectbox("Select the exact title", 
                                              matched_titles[title_column].tolist())
             else:
-                st.warning(f"No books found containing '{user_input}'")
-                
-                # Offer to search Open Library API directly
-                if st.button(f"Search Open Library for '{user_input}'"):
-                    with st.spinner("Searching Open Library..."):
-                        search_results = search_books(user_input)
-                        if search_results:
-                            new_books = create_books_dataframe(search_results)
-                            books_df = pd.concat([books_df, new_books]).drop_duplicates(subset=[title_column])
-                            st.success(f"Found {len(new_books)} books matching '{user_input}'")
-                            # Update unique values after search
-                            unique_authors = sorted(books_df[author_column].dropna().unique())
-                            unique_categories = sorted(books_df[category_column].str.split(',').explode().str.strip().dropna().unique())
-                            # Try matching titles again
-                            matched_titles = books_df[books_df[title_column].str.contains(user_input, case=False)]
-                            if not matched_titles.empty:
-                                selected_title = st.sidebar.selectbox("Select the exact title", 
-                                                           matched_titles[title_column].tolist())
-                            else:
-                                st.error("Still no exact matches. Please try a different search.")
-                                st.stop()
-                        else:
-                            st.error(f"No books found for '{user_input}'")
-                            st.stop()
-                else:
-                    st.stop()
+                st.error(f"No books found for '{user_input}' even after searching Open Library.")
+                st.stop()
         else:
             st.info("Enter a book title to get recommendations.")
             st.stop()
     else:  # By Author then Title
         selected_author = st.sidebar.selectbox("Select Author", unique_authors)
+        
+        # Check if author has books
         author_books = books_df[books_df[author_column] == selected_author][title_column].tolist()
-        selected_title = st.sidebar.selectbox("Select a book", author_books)
+        
+        # If author has no books, automatically search for them
+        if not author_books:
+            with st.spinner(f"Finding books by {selected_author}..."):
+                search_results = search_books(selected_author, search_type='author')
+                if search_results:
+                    new_books = create_books_dataframe(search_results)
+                    # Filter to include only books by this author
+                    author_parts = selected_author.lower().split()
+                    filtered_new_books = new_books[
+                        new_books[author_column].str.lower().apply(
+                            lambda x: all(part in x.lower() for part in author_parts)
+                        )
+                    ]
+                    
+                    if not filtered_new_books.empty:
+                        books_df = pd.concat([books_df, filtered_new_books]).drop_duplicates(subset=[title_column])
+                        st.success(f"Found {len(filtered_new_books)} books by {selected_author}")
+                        # Update author books list
+                        author_books = books_df[books_df[author_column] == selected_author][title_column].tolist()
+                        # Update unique values after search
+                        unique_authors = sorted(books_df[author_column].dropna().unique())
+                        unique_categories = sorted(books_df[category_column].str.split(',').explode().str.strip().dropna().unique())
+        
+        # Now check if we have books for this author
+        if author_books:
+            selected_title = st.sidebar.selectbox("Select a book", author_books)
+        else:
+            st.error(f"No books found by {selected_author} even after searching Open Library.")
+            st.stop()
     
     # Number of recommendations
     num_recommendations = st.sidebar.slider("Number of recommendations", 1, 20, 5)
