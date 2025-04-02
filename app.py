@@ -279,6 +279,29 @@ elif filter_method == "By Author":
     selected_author = st.sidebar.selectbox("Select Author", unique_authors)
     filtered_books = books_df[books_df[author_column] == selected_author]
     
+    # Automatically search API if no books found
+    if filtered_books.empty:
+        with st.spinner(f"Searching for books by {selected_author}..."):
+            search_results = search_books(selected_author, search_type='author')
+            if search_results:
+                new_books = create_books_dataframe(search_results)
+                # Filter to include only books by this author
+                author_parts = selected_author.lower().split()
+                filtered_new_books = new_books[
+                    new_books[author_column].str.lower().apply(
+                        lambda x: all(part in x.lower() for part in author_parts)
+                    )
+                ]
+                
+                if not filtered_new_books.empty:
+                    books_df = pd.concat([books_df, filtered_new_books]).drop_duplicates(subset=[title_column])
+                    st.success(f"Found {len(filtered_new_books)} books by {selected_author}")
+                    # Update filtered books
+                    filtered_books = books_df[books_df[author_column] == selected_author]
+                    # Update unique values after search
+                    unique_authors = sorted(books_df[author_column].dropna().unique())
+                    unique_categories = sorted(books_df[category_column].str.split(',').explode().str.strip().dropna().unique())
+    
     st.header(f"Books by {selected_author}")
     if not filtered_books.empty:
         total_books = len(filtered_books)
