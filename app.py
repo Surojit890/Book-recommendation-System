@@ -309,20 +309,73 @@ elif filter_method == "By Author":
     else:
         st.write("No books found for this author.")
         
-        # Offer to search for the author
+        # Offer better author search options
+        st.markdown("### Search for this author")
+        search_method = st.radio(
+            "How would you like to search?", 
+            ["By Author Name", "By Author + 'author'", "Custom Search"]
+        )
+        
         if st.button(f"Search Open Library for books by {selected_author}"):
             with st.spinner(f"Searching for books by {selected_author}..."):
-                search_results = search_books(selected_author)
+                # Modify the search query based on selection
+                if search_method == "By Author Name":
+                    search_query = selected_author
+                elif search_method == "By Author + 'author'":
+                    search_query = f"{selected_author} author"
+                else:  # Custom Search
+                    search_query = st.text_input("Enter custom search", f"{selected_author} books")
+                    
+                search_results = search_books(search_query)
                 if search_results:
                     new_books = create_books_dataframe(search_results)
-                    books_df = pd.concat([books_df, new_books]).drop_duplicates(subset=[title_column])
-                    st.success(f"Found {len(new_books)} books that might be by {selected_author}")
-                    # Update unique values after search
-                    unique_authors = sorted(books_df[author_column].dropna().unique())
-                    unique_categories = sorted(books_df[category_column].str.split(',').explode().str.strip().dropna().unique())
-                    st.info(f"Please select {selected_author} again to see if we found books by them.")
+                    
+                    # Filter to only include books where the author name appears
+                    author_parts = selected_author.lower().split()
+                    filtered_new_books = new_books[
+                        new_books[author_column].str.lower().apply(
+                            lambda x: all(part in x.lower() for part in author_parts)
+                        )
+                    ]
+                    
+                    if not filtered_new_books.empty:
+                        books_df = pd.concat([books_df, filtered_new_books]).drop_duplicates(subset=[title_column])
+                        st.success(f"Found {len(filtered_new_books)} books by {selected_author}")
+                        
+                        # Show the found books immediately
+                        for _, row in filtered_new_books.iterrows():
+                            col1, col2 = st.columns([1, 3])
+                            
+                            with col1:
+                                if row.get('thumbnail'):
+                                    st.image(row['thumbnail'], width=130)
+                                else:
+                                    st.markdown("📚")  # Book emoji as placeholder
+                            
+                            with col2:
+                                st.markdown(f"### {row[title_column]}")
+                                st.markdown(f"**Category:** {row[category_column]}")
+                                # Truncate long descriptions
+                                description = row[description_column][:MAX_DESCRIPTION_LENGTH]
+                                if len(row[description_column]) > MAX_DESCRIPTION_LENGTH:
+                                    description += "..."
+                                st.markdown(f"**Description:** {description}")
+                                st.markdown(f"**Published:** {row['publishedDate']}")
+                            
+                            st.divider()
+                        
+                        # Update unique values after search
+                        unique_authors = sorted(books_df[author_column].dropna().unique())
+                        unique_categories = sorted(books_df[category_column].str.split(',').explode().str.strip().dropna().unique())
+                    else:
+                        st.warning(f"Found books, but none appear to be by {selected_author}")
+                        
+                        # Offer to show all results anyway
+                        if st.button("Show all search results anyway"):
+                            books_df = pd.concat([books_df, new_books]).drop_duplicates(subset=[title_column])
+                            st.success(f"Added {len(new_books)} books to the collection")
                 else:
-                    st.error(f"No books found by {selected_author}")
+                    st.error(f"No books found using the search term: {search_query}")
 
 # Recommendation Section
 else:  # Get Recommendations
