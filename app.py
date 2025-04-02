@@ -23,6 +23,12 @@ st.markdown("""
 Discover your next favorite book based on titles, authors, and categories you enjoy!
 """)
 
+# Define column names
+title_column = 'title'
+author_column = 'authors'
+category_column = 'categories'
+description_column = 'description'
+
 # Function to load data from Open Library API
 @st.cache_data(ttl=3600)  # Cache for 1 hour
 def search_books(query, max_results=MAX_API_RESULTS, search_type=None):
@@ -234,15 +240,40 @@ except Exception as e:
     st.error(f"Error loading data: {e}")
     st.stop()
 
-# Define column names
-title_column = 'title'
-author_column = 'authors'
-category_column = 'categories'
-description_column = 'description'
+@st.cache_data
+def preload_popular_authors():
+    """Load books by commonly searched authors to improve user experience"""
+    popular_authors = [
+        "A.P.J. Abdul Kalam",
+        "J.K. Rowling",
+        "Stephen King",
+        "Chetan Bhagat",
+        "Rabindranath Tagore"
+    ]
+    
+    all_books = []
+    for author in popular_authors:
+        results = search_books_by_author(author, max_results=10)
+        if results:
+            all_books.extend(results)
+    
+    return create_books_dataframe(all_books)
 
 # Extract unique values
 unique_authors = sorted(books_df[author_column].dropna().unique())
 unique_categories = sorted(books_df[category_column].str.split(',').explode().str.strip().dropna().unique())
+
+# Try to load popular authors
+try:
+    with st.spinner("Loading books by popular authors..."):
+        popular_author_books = preload_popular_authors()
+        if not popular_author_books.empty:
+            books_df = pd.concat([books_df, popular_author_books]).drop_duplicates(subset=[title_column])
+            # Update unique values
+            unique_authors = sorted(books_df[author_column].dropna().unique())
+            unique_categories = sorted(books_df[category_column].str.split(',').explode().str.strip().dropna().unique())
+except Exception as e:
+    st.warning(f"Could not preload popular authors: {e}")
 
 # Basic data exploration
 with st.expander("Dataset Information"):
@@ -330,6 +361,35 @@ filter_method = st.sidebar.radio(
 
 # Update session state
 st.session_state.filter_method = filter_method
+
+# Function to get book recommendations
+def get_book_recommendations(title, num_rec=5):
+    # Get the selected book's details
+    book = books_df[books_df[title_column] == title].iloc[0]
+    book_author = book[author_column]
+    book_categories = book[category_column].split(',')
+    
+    # Create a scoring system - make a copy to avoid modifying the original
+    temp_df = books_df.copy()
+    temp_df['score'] = 0
+    
+    # Add points for matching categories
+    for category in book_categories:
+        category = category.strip()
+        temp_df.loc[temp_df[category_column].str.contains(category, na=False), 'score'] += 1
+    
+    # Add points for same author
+    temp_df.loc[temp_df[author_column] == book_author, 'score'] += 2
+    
+    # Get recommendations
+    recommendations = temp_df[temp_df[title_column] != title].copy()
+    recommendations = recommendations.nlargest(num_rec, 'score')
+    
+    # Calculate match score based on maximum possible score
+    max_possible_score = len(book_categories) + 2  # categories + author
+    recommendations['match_score'] = recommendations['score'] / max_possible_score
+    
+    return recommendations
 
 # Main Content Area
 if filter_method is None and not st.session_state.search_results_displayed:
@@ -492,18 +552,9 @@ elif filter_method == "By Author":
                         # Update unique values after search
                         unique_authors = sorted(books_df[author_column].dropna().unique())
                         unique_categories = sorted(books_df[category_column].str.split(',').explode().str.strip().dropna().unique())
-                    else:
-                        st.warning(f"Found books, but none appear to be by {selected_author}")
-                        
-                        # Offer to show all results anyway
-                        if st.button("Show all search results anyway"):
-                            books_df = pd.concat([books_df, new_books]).drop_duplicates(subset=[title_column])
-                            st.success(f"Added {len(new_books)} books to the collection")
-                else:
-                    st.error(f"No books found using the search term: {search_query}")
 
 # Recommendation Section
-else:  # Get Recommendations
+elif filter_method == "Get Recommendations":
     st.sidebar.markdown("### Find Similar Books")
     
     # Book selection method
@@ -511,34 +562,6 @@ else:  # Get Recommendations
         "How would you like to select a book?",
         ["By Title", "By Author then Title"]
     )
-    
-    def get_book_recommendations(title, num_rec=5):
-        # Get the selected book's details
-        book = books_df[books_df[title_column] == title].iloc[0]
-        book_author = book[author_column]
-        book_categories = book[category_column].split(',')
-        
-        # Create a scoring system - make a copy to avoid modifying the original
-        temp_df = books_df.copy()
-        temp_df['score'] = 0
-        
-        # Add points for matching categories
-        for category in book_categories:
-            category = category.strip()
-            temp_df.loc[temp_df[category_column].str.contains(category, na=False), 'score'] += 1
-        
-        # Add points for same author
-        temp_df.loc[temp_df[author_column] == book_author, 'score'] += 2
-        
-        # Get recommendations
-        recommendations = temp_df[temp_df[title_column] != title].copy()
-        recommendations = recommendations.nlargest(num_rec, 'score')
-        
-        # Calculate match score based on maximum possible score
-        max_possible_score = len(book_categories) + 2  # categories + author
-        recommendations['match_score'] = recommendations['score'] / max_possible_score
-        
-        return recommendations
     
     if book_selection_method == "By Title":
         user_input = st.sidebar.text_input("Enter a book title")
