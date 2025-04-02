@@ -25,7 +25,15 @@ Discover your next favorite book based on titles, authors, and categories you en
 
 # Function to load data from Open Library API
 @st.cache_data(ttl=3600)  # Cache for 1 hour
-def search_books(query, max_results=MAX_API_RESULTS):
+def search_books(query, max_results=MAX_API_RESULTS, search_type=None):
+    """
+    Search for books in the Open Library API.
+    
+    Parameters:
+    - query: Search term
+    - max_results: Maximum number of results to return
+    - search_type: Can be None, 'author', 'title', or 'subject'
+    """
     base_url = "https://openlibrary.org/search.json"
     
     # Start with empty results
@@ -36,6 +44,14 @@ def search_books(query, max_results=MAX_API_RESULTS):
         'limit': max_results,
         'fields': 'key,title,author_name,subject,first_publish_year,publisher,isbn,cover_i,first_sentence,language'
     }
+    
+    # Add search type parameter if specified
+    if search_type == 'author':
+        params['author'] = query
+    elif search_type == 'title':
+        params['title'] = query
+    elif search_type == 'subject':
+        params['subject'] = query
     
     try:
         response = requests.get(base_url, params=params)
