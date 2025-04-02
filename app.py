@@ -326,7 +326,7 @@ elif filter_method == "By Author":
                 else:  # Custom Search
                     search_query = st.text_input("Enter custom search", f"{selected_author} books")
                     
-                search_results = search_books(search_query)
+                search_results = search_books(selected_author, search_type='author')
                 if search_results:
                     new_books = create_books_dataframe(search_results)
                     
