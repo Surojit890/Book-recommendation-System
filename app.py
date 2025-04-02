@@ -142,6 +142,12 @@ st.sidebar.header("Find Books By:")
 # Search options
 st.sidebar.markdown("### Search Open Library")
 search_query = st.sidebar.text_input("Search for books", "")
+
+# At the beginning of your app, after initializing other session state variables
+if 'search_results_displayed' not in st.session_state:
+    st.session_state.search_results_displayed = False
+
+# When displaying search results, set the flag
 if st.sidebar.button("Search"):
     if search_query:
         with st.spinner("Searching Open Library..."):
@@ -149,6 +155,10 @@ if st.sidebar.button("Search"):
             if search_results:
                 books_df = create_books_dataframe(search_results)
                 st.success(f"Found {len(books_df)} books matching '{search_query}'")
+                
+                # Set the flag to indicate search results are displayed
+                st.session_state.search_results_displayed = True
+                
                 # Update unique values after search
                 unique_authors = sorted(books_df[author_column].dropna().unique())
                 unique_categories = sorted(books_df[category_column].str.split(',').explode().str.strip().dropna().unique())
@@ -207,7 +217,7 @@ filter_method = st.sidebar.radio(
 st.session_state.filter_method = filter_method
 
 # Main Content Area
-if filter_method is None and 'search_results_displayed' not in locals():
+if filter_method is None and not st.session_state.search_results_displayed:
     # Landing page content
     st.markdown("""
     ## Welcome to the Book Recommendation System!
