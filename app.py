@@ -71,6 +71,105 @@ def search_books(query, max_results=MAX_API_RESULTS, search_type=None):
     # Limit to max_results
     return all_items[:max_results]
 
+@st.cache_data(ttl=3600)
+def search_books_by_author(author_name, max_results=MAX_API_RESULTS):
+    """
+    Specialized function to search for books by a specific author using multiple search strategies.
+    This improves results for authors like A.P.J. Abdul Kalam where standard searches may fail.
+    """
+    all_items = []
+    
+    # Try different search strategies
+    search_strategies = [
+        # Strategy 1: Use author search parameter
+        {"url": "https://openlibrary.org/search.json", "params": {
+            'author': author_name,
+            'limit': max_results,
+            'fields': 'key,title,author_name,subject,first_publish_year,publisher,isbn,cover_i,first_sentence,language'
+        }},
+        
+        # Strategy 2: Use author as a general query
+        {"url": "https://openlibrary.org/search.json", "params": {
+            'q': author_name,
+            'limit': max_results,
+            'fields': 'key,title,author_name,subject,first_publish_year,publisher,isbn,cover_i,first_sentence,language'
+        }},
+        
+        # Strategy 3: Try with "author" keyword
+        {"url": "https://openlibrary.org/search.json", "params": {
+            'q': f"{author_name} author",
+            'limit': max_results,
+            'fields': 'key,title,author_name,subject,first_publish_year,publisher,isbn,cover_i,first_sentence,language'
+        }}
+    ]
+    
+    # Try name variations for authors with initials like A.P.J. Abdul Kalam
+    if '.' in author_name:
+        # Remove dots from initials
+        normalized_name = author_name.replace('.', '')
+        search_strategies.append({"url": "https://openlibrary.org/search.json", "params": {
+            'q': normalized_name,
+            'limit': max_results,
+            'fields': 'key,title,author_name,subject,first_publish_year,publisher,isbn,cover_i,first_sentence,language'
+        }})
+        
+        # Try with spaces after dots
+        spaced_name = ' '.join([c + ' ' if c == '.' else c for c in author_name]).replace('  ', ' ').strip()
+        search_strategies.append({"url": "https://openlibrary.org/search.json", "params": {
+            'q': spaced_name,
+            'limit': max_results,
+            'fields': 'key,title,author_name,subject,first_publish_year,publisher,isbn,cover_i,first_sentence,language'
+        }})
+    
+    # Try each search strategy
+    for strategy in search_strategies:
+        try:
+            response = requests.get(strategy["url"], params=strategy["params"])
+            response.raise_for_status()
+            data = response.json()
+            
+            if 'docs' in data and len(data['docs']) > 0:
+                # Get new items that aren't already in our list
+                new_items = [item for item in data['docs'] if item not in all_items]
+                all_items.extend(new_items)
+                
+                # If we've found enough items, stop searching
+                if len(all_items) >= max_results:
+                    break
+            
+            # Avoid hitting API rate limits
+            time.sleep(0.5)
+            
+        except Exception as e:
+            st.error(f"API Error with strategy {strategy['params']}: {e}")
+    
+    # Process the items to prioritize those that really match the author
+    processed_items = []
+    author_name_lower = author_name.lower()
+    author_parts = author_name_lower.split()
+    
+    for item in all_items:
+        if 'author_name' in item:
+            # Check if any author name contains all parts of the requested author name
+            match_score = 0
+            for db_author in item['author_name']:
+                db_author_lower = db_author.lower()
+                if all(part in db_author_lower for part in author_parts):
+                    match_score = len(author_parts)  # Maximum score
+                    break
+                else:
+                    # Partial match - count matching parts
+                    matching_parts = sum(1 for part in author_parts if part in db_author_lower)
+                    match_score = max(match_score, matching_parts)
+            
+            # Add match score to item
+            item['_match_score'] = match_score
+            processed_items.append(item)
+    
+    # Sort by match score (highest first) and limit results
+    processed_items.sort(key=lambda x: x.get('_match_score', 0), reverse=True)
+    return processed_items[:max_results]
+
 # Function to get book details from Open Library
 @st.cache_data(ttl=3600)
 def get_book_details(work_key):
@@ -282,7 +381,7 @@ elif filter_method == "By Author":
     # Automatically search API if no books found
     if filtered_books.empty:
         with st.spinner(f"Searching for books by {selected_author}..."):
-            search_results = search_books(selected_author, search_type='author')
+            search_results = search_books_by_author(selected_author)
             if search_results:
                 new_books = create_books_dataframe(search_results)
                 # Filter to include only books by this author
