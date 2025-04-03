@@ -435,11 +435,24 @@ if filter_method is None and not st.session_state.search_results_displayed:
 
 # By Author Section
 elif filter_method == "By Author":
-    selected_author = st.sidebar.selectbox("Select Author", unique_authors)
+    # Add an empty option as the default
+    author_options = [""] + unique_authors
+    selected_author = st.sidebar.selectbox(
+        "Select Author", 
+        author_options,
+        index=0,  # Select the empty option by default
+        format_func=lambda x: "Select an author..." if x == "" else x
+    )
+    
+    # Only proceed if an author is selected
+    if not selected_author:
+        st.info("Please select an author to see their books.")
+        st.stop()
+        
     filtered_books = books_df[books_df[author_column] == selected_author]
     
     # Automatically search API if no books found
-    if (filtered_books.empty):
+    if filtered_books.empty:
         with st.spinner(f"Searching for books by {selected_author}..."):
             # Use enhanced author search function
             search_results = search_books_by_author(selected_author)
