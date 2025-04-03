@@ -23,6 +23,12 @@ st.markdown("""
 Discover your next favorite book based on titles, authors, and categories you enjoy!
 """)
 
+# Define column names
+title_column = 'title'
+author_column = 'authors'
+category_column = 'categories'
+description_column = 'description'
+
 # Function to load data from Open Library API
 @st.cache_data(ttl=3600)  # Cache for 1 hour
 def search_books(query, max_results=MAX_API_RESULTS, search_type=None):
@@ -70,6 +76,105 @@ def search_books(query, max_results=MAX_API_RESULTS, search_type=None):
     
     # Limit to max_results
     return all_items[:max_results]
+
+@st.cache_data(ttl=3600)
+def search_books_by_author(author_name, max_results=MAX_API_RESULTS):
+    """
+    Specialized function to search for books by a specific author using multiple search strategies.
+    This improves results for authors like A.P.J. Abdul Kalam where standard searches may fail.
+    """
+    all_items = []
+    
+    # Try different search strategies
+    search_strategies = [
+        # Strategy 1: Use author search parameter
+        {"url": "https://openlibrary.org/search.json", "params": {
+            'author': author_name,
+            'limit': max_results,
+            'fields': 'key,title,author_name,subject,first_publish_year,publisher,isbn,cover_i,first_sentence,language'
+        }},
+        
+        # Strategy 2: Use author as a general query
+        {"url": "https://openlibrary.org/search.json", "params": {
+            'q': author_name,
+            'limit': max_results,
+            'fields': 'key,title,author_name,subject,first_publish_year,publisher,isbn,cover_i,first_sentence,language'
+        }},
+        
+        # Strategy 3: Try with "author" keyword
+        {"url": "https://openlibrary.org/search.json", "params": {
+            'q': f"{author_name} author",
+            'limit': max_results,
+            'fields': 'key,title,author_name,subject,first_publish_year,publisher,isbn,cover_i,first_sentence,language'
+        }}
+    ]
+    
+    # Try name variations for authors with initials like A.P.J. Abdul Kalam
+    if '.' in author_name:
+        # Remove dots from initials
+        normalized_name = author_name.replace('.', '')
+        search_strategies.append({"url": "https://openlibrary.org/search.json", "params": {
+            'q': normalized_name,
+            'limit': max_results,
+            'fields': 'key,title,author_name,subject,first_publish_year,publisher,isbn,cover_i,first_sentence,language'
+        }})
+        
+        # Try with spaces after dots
+        spaced_name = ' '.join([c + ' ' if c == '.' else c for c in author_name]).replace('  ', ' ').strip()
+        search_strategies.append({"url": "https://openlibrary.org/search.json", "params": {
+            'q': spaced_name,
+            'limit': max_results,
+            'fields': 'key,title,author_name,subject,first_publish_year,publisher,isbn,cover_i,first_sentence,language'
+        }})
+    
+    # Try each search strategy
+    for strategy in search_strategies:
+        try:
+            response = requests.get(strategy["url"], params=strategy["params"])
+            response.raise_for_status()
+            data = response.json()
+            
+            if 'docs' in data and len(data['docs']) > 0:
+                # Get new items that aren't already in our list
+                new_items = [item for item in data['docs'] if item not in all_items]
+                all_items.extend(new_items)
+                
+                # If we've found enough items, stop searching
+                if len(all_items) >= max_results:
+                    break
+            
+            # Avoid hitting API rate limits
+            time.sleep(0.5)
+            
+        except Exception as e:
+            st.error(f"API Error with strategy {strategy['params']}: {e}")
+    
+    # Process the items to prioritize those that really match the author
+    processed_items = []
+    author_name_lower = author_name.lower()
+    author_parts = author_name_lower.split()
+    
+    for item in all_items:
+        if 'author_name' in item:
+            # Check if any author name contains all parts of the requested author name
+            match_score = 0
+            for db_author in item['author_name']:
+                db_author_lower = db_author.lower()
+                if all(part in db_author_lower for part in author_parts):
+                    match_score = len(author_parts)  # Maximum score
+                    break
+                else:
+                    # Partial match - count matching parts
+                    matching_parts = sum(1 for part in author_parts if part in db_author_lower)
+                    match_score = max(match_score, matching_parts)
+            
+            # Add match score to item
+            item['_match_score'] = match_score
+            processed_items.append(item)
+    
+    # Sort by match score (highest first) and limit results
+    processed_items.sort(key=lambda x: x.get('_match_score', 0), reverse=True)
+    return processed_items[:max_results]
 
 # Function to get book details from Open Library
 @st.cache_data(ttl=3600)
@@ -135,15 +240,40 @@ except Exception as e:
     st.error(f"Error loading data: {e}")
     st.stop()
 
-# Define column names
-title_column = 'title'
-author_column = 'authors'
-category_column = 'categories'
-description_column = 'description'
+@st.cache_data
+def preload_popular_authors():
+    """Load books by commonly searched authors to improve user experience"""
+    popular_authors = [
+        "A.P.J. Abdul Kalam",
+        "J.K. Rowling",
+        "Stephen King",
+        "Chetan Bhagat",
+        "Rabindranath Tagore"
+    ]
+    
+    all_books = []
+    for author in popular_authors:
+        results = search_books_by_author(author, max_results=10)
+        if results:
+            all_books.extend(results)
+    
+    return create_books_dataframe(all_books)
 
 # Extract unique values
 unique_authors = sorted(books_df[author_column].dropna().unique())
 unique_categories = sorted(books_df[category_column].str.split(',').explode().str.strip().dropna().unique())
+
+# Try to load popular authors
+try:
+    with st.spinner("Loading books by popular authors..."):
+        popular_author_books = preload_popular_authors()
+        if not popular_author_books.empty:
+            books_df = pd.concat([books_df, popular_author_books]).drop_duplicates(subset=[title_column])
+            # Update unique values
+            unique_authors = sorted(books_df[author_column].dropna().unique())
+            unique_categories = sorted(books_df[category_column].str.split(',').explode().str.strip().dropna().unique())
+except Exception as e:
+    st.warning(f"Could not preload popular authors: {e}")
 
 # Basic data exploration
 with st.expander("Dataset Information"):
@@ -232,6 +362,35 @@ filter_method = st.sidebar.radio(
 # Update session state
 st.session_state.filter_method = filter_method
 
+# Function to get book recommendations
+def get_book_recommendations(title, num_rec=5):
+    # Get the selected book's details
+    book = books_df[books_df[title_column] == title].iloc[0]
+    book_author = book[author_column]
+    book_categories = book[category_column].split(',')
+    
+    # Create a scoring system - make a copy to avoid modifying the original
+    temp_df = books_df.copy()
+    temp_df['score'] = 0
+    
+    # Add points for matching categories
+    for category in book_categories:
+        category = category.strip()
+        temp_df.loc[temp_df[category_column].str.contains(category, na=False), 'score'] += 1
+    
+    # Add points for same author
+    temp_df.loc[temp_df[author_column] == book_author, 'score'] += 2
+    
+    # Get recommendations
+    recommendations = temp_df[temp_df[title_column] != title].copy()
+    recommendations = recommendations.nlargest(num_rec, 'score')
+    
+    # Calculate match score based on maximum possible score
+    max_possible_score = len(book_categories) + 2  # categories + author
+    recommendations['match_score'] = recommendations['score'] / max_possible_score
+    
+    return recommendations
+
 # Main Content Area
 if filter_method is None and not st.session_state.search_results_displayed:
     # Landing page content
@@ -276,20 +435,36 @@ if filter_method is None and not st.session_state.search_results_displayed:
 
 # By Author Section
 elif filter_method == "By Author":
-    selected_author = st.sidebar.selectbox("Select Author", unique_authors)
+    # Add an empty option as the default
+    author_options = [""] + unique_authors
+    selected_author = st.sidebar.selectbox(
+        "Select Author", 
+        author_options,
+        index=0,  # Select the empty option by default
+        format_func=lambda x: "Select an author..." if x == "" else x
+    )
+    
+    # Only proceed if an author is selected
+    if not selected_author:
+        st.info("Please select an author to see their books.")
+        st.stop()
+        
     filtered_books = books_df[books_df[author_column] == selected_author]
     
     # Automatically search API if no books found
     if filtered_books.empty:
         with st.spinner(f"Searching for books by {selected_author}..."):
-            search_results = search_books(selected_author, search_type='author')
+            # Use enhanced author search function
+            search_results = search_books_by_author(selected_author)
             if search_results:
                 new_books = create_books_dataframe(search_results)
-                # Filter to include only books by this author
+                # Less strict filtering for author names
                 author_parts = selected_author.lower().split()
+                threshold = max(1, len(author_parts) // 2)  # At least half the parts must match
+                
                 filtered_new_books = new_books[
                     new_books[author_column].str.lower().apply(
-                        lambda x: all(part in x.lower() for part in author_parts)
+                        lambda x: sum(part in x for part in author_parts) >= threshold
                     )
                 ]
                 
@@ -297,7 +472,7 @@ elif filter_method == "By Author":
                     books_df = pd.concat([books_df, filtered_new_books]).drop_duplicates(subset=[title_column])
                     st.success(f"Found {len(filtered_new_books)} books by {selected_author}")
                     # Update filtered books
-                    filtered_books = books_df[books_df[author_column] == selected_author]
+                    filtered_books = books_df[books_df[author_column].str.contains(selected_author, case=False)]
                     # Update unique values after search
                     unique_authors = sorted(books_df[author_column].dropna().unique())
                     unique_categories = sorted(books_df[category_column].str.split(',').explode().str.strip().dropna().unique())
@@ -390,18 +565,9 @@ elif filter_method == "By Author":
                         # Update unique values after search
                         unique_authors = sorted(books_df[author_column].dropna().unique())
                         unique_categories = sorted(books_df[category_column].str.split(',').explode().str.strip().dropna().unique())
-                    else:
-                        st.warning(f"Found books, but none appear to be by {selected_author}")
-                        
-                        # Offer to show all results anyway
-                        if st.button("Show all search results anyway"):
-                            books_df = pd.concat([books_df, new_books]).drop_duplicates(subset=[title_column])
-                            st.success(f"Added {len(new_books)} books to the collection")
-                else:
-                    st.error(f"No books found using the search term: {search_query}")
 
 # Recommendation Section
-else:  # Get Recommendations
+elif filter_method == "Get Recommendations":
     st.sidebar.markdown("### Find Similar Books")
     
     # Book selection method
@@ -409,34 +575,6 @@ else:  # Get Recommendations
         "How would you like to select a book?",
         ["By Title", "By Author then Title"]
     )
-    
-    def get_book_recommendations(title, num_rec=5):
-        # Get the selected book's details
-        book = books_df[books_df[title_column] == title].iloc[0]
-        book_author = book[author_column]
-        book_categories = book[category_column].split(',')
-        
-        # Create a scoring system - make a copy to avoid modifying the original
-        temp_df = books_df.copy()
-        temp_df['score'] = 0
-        
-        # Add points for matching categories
-        for category in book_categories:
-            category = category.strip()
-            temp_df.loc[temp_df[category_column].str.contains(category, na=False), 'score'] += 1
-        
-        # Add points for same author
-        temp_df.loc[temp_df[author_column] == book_author, 'score'] += 2
-        
-        # Get recommendations
-        recommendations = temp_df[temp_df[title_column] != title].copy()
-        recommendations = recommendations.nlargest(num_rec, 'score')
-        
-        # Calculate match score based on maximum possible score
-        max_possible_score = len(book_categories) + 2  # categories + author
-        recommendations['match_score'] = recommendations['score'] / max_possible_score
-        
-        return recommendations
     
     if book_selection_method == "By Title":
         user_input = st.sidebar.text_input("Enter a book title")
@@ -469,37 +607,64 @@ else:  # Get Recommendations
             st.info("Enter a book title to get recommendations.")
             st.stop()
     else:  # By Author then Title
-        selected_author = st.sidebar.selectbox("Select Author", unique_authors)
+        # Add an empty option as the default
+        author_options = [""] + unique_authors
+        selected_author = st.sidebar.selectbox(
+            "Select Author", 
+            author_options,
+            index=0,  # Select the empty option by default
+            format_func=lambda x: "Select an author..." if x == "" else x
+        )
         
+        # Only proceed if an author is selected
+        if not selected_author:
+            st.info("Please select an author to see their books.")
+            st.stop()
+            
         # Check if author has books
-        author_books = books_df[books_df[author_column] == selected_author][title_column].tolist()
+        author_books = books_df[books_df[author_column].str.contains(selected_author, case=False)][title_column].tolist()
         
         # If author has no books, automatically search for them
         if not author_books:
             with st.spinner(f"Finding books by {selected_author}..."):
-                search_results = search_books(selected_author, search_type='author')
+                # Use improved author search
+                search_results = search_books_by_author(selected_author)
                 if search_results:
                     new_books = create_books_dataframe(search_results)
-                    # Filter to include only books by this author
+                    # Less strict filtering
                     author_parts = selected_author.lower().split()
+                    threshold = max(1, len(author_parts) // 2)  # At least half the parts must match
+                    
                     filtered_new_books = new_books[
                         new_books[author_column].str.lower().apply(
-                            lambda x: all(part in x.lower() for part in author_parts)
+                            lambda x: sum(part in x for part in author_parts) >= threshold
                         )
                     ]
                     
                     if not filtered_new_books.empty:
                         books_df = pd.concat([books_df, filtered_new_books]).drop_duplicates(subset=[title_column])
                         st.success(f"Found {len(filtered_new_books)} books by {selected_author}")
-                        # Update author books list
-                        author_books = books_df[books_df[author_column] == selected_author][title_column].tolist()
+                        # Update author books list - use more flexible matching
+                        author_books = books_df[books_df[author_column].str.contains(selected_author, case=False)][title_column].tolist()
                         # Update unique values after search
                         unique_authors = sorted(books_df[author_column].dropna().unique())
                         unique_categories = sorted(books_df[category_column].str.split(',').explode().str.strip().dropna().unique())
         
         # Now check if we have books for this author
         if author_books:
-            selected_title = st.sidebar.selectbox("Select a book", author_books)
+            # Add empty option as default
+            book_options = [""] + author_books
+            selected_title = st.sidebar.selectbox(
+                "Select a book", 
+                book_options,
+                index=0,  # Select the empty option by default
+                format_func=lambda x: "Select a book..." if x == "" else x
+            )
+            
+            # Only proceed if a book is selected
+            if not selected_title:
+                st.info(f"Please select a book by {selected_author} to get recommendations.")
+                st.stop()
         else:
             st.error(f"No books found by {selected_author} even after searching Open Library.")
             st.stop()
